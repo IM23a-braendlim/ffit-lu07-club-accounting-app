@@ -9,15 +9,17 @@ import ch.bzz.generated.model.AccountUpdate;
 import ch.bzz.generated.model.UpdateAccountsRequest;
 import ch.bzz.repositories.AccountRepository;
 import ch.bzz.repositories.ProjectRepository;
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.tomcat.util.net.openssl.ciphers.Authentication;
+import org.openapitools.jackson.nullable.JsonNullable;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -40,76 +42,118 @@ public class AccountApiController implements AccountApi {
 
     @Override
     public ResponseEntity<List<Account>> getAccounts() {
-        try {
-            String authHeader = request.getHeader("Authorization");
-
-            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-                log.warn("Kein oder ungültiger Authorization-Header gefunden.");
-                return ResponseEntity.status(401).build();
-            }
-
-            String token = authHeader.substring(7);
-
-            String projectName = jwtUtil.extractProjectName(token);
-            log.info("Projektname aus JWT extrahiert: {}", projectName);
-
-            Project project = projectRepository.findByProjectName(projectName)
-                    .orElseThrow(() -> new RuntimeException("Project not found: " + projectName));
-
-            List<AccountEntity> entityAccounts = accountRepository.findByProject(project);
-
-            List<Account> apiAccounts = entityAccounts.stream()
-                    .map(entity -> {
-                        return new Account();
-                    })
-                    .collect(Collectors.toList());
-
-            return ResponseEntity.ok(apiAccounts);
-        } catch (Exception e) {
-            log.error("Fehler beim Abrufen der Accounts über den JWT-Header: ", e);
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            log.warn("Kein oder ungültiger Authorization-Header gefunden.");
             return ResponseEntity.status(401).build();
         }
+
+        String projectName;
+        try {
+            projectName = jwtUtil.extractProjectName(authHeader.substring(7));
+        } catch (JwtException | IllegalArgumentException e) {
+            log.warn("Ungültiger oder abgelaufener Token.");
+            return ResponseEntity.status(401).build();
+        }
+        log.info("Projektname aus JWT extrahiert: {}", projectName);
+
+        Project project = projectRepository.findByProjectName(projectName).orElse(null);
+        if (project == null) {
+            log.warn("Projekt nicht gefunden: {}", projectName);
+            return ResponseEntity.status(401).build();
+        }
+
+        List<AccountEntity> entityAccounts = accountRepository.findByProject(project);
+
+        List<Account> apiAccounts = entityAccounts.stream()
+                .map(entity -> {
+                    Account account = new Account();
+                    account.setNumber(entity.getAccountNumber());
+                    account.setName(entity.getName());
+                    return account;
+                })
+                .collect(Collectors.toList());
+
+        return ResponseEntity.ok(apiAccounts);
     }
 
-
+    @Transactional
     @Override
     public ResponseEntity<Void> updateAccounts(UpdateAccountsRequest updateAccountsRequest) {
+        // 1. Subject (ProjectName) aus dem JWT auslesen
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            return ResponseEntity.status(401).build();
+        }
+
+        String projectName;
         try {
-            String authHeader = request.getHeader("Authorization");
-            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-                return ResponseEntity.status(401).build();
-            }
+            projectName = jwtUtil.extractProjectName(authHeader.substring(7));
+        } catch (JwtException | IllegalArgumentException e) {
+            return ResponseEntity.status(401).build();
+        }
 
-            String token = authHeader.substring(7);
-            String projectName = jwtUtil.extractProjectName(token);
+        Project project = projectRepository.findByProjectName(projectName).orElse(null);
+        if (project == null) {
+            return ResponseEntity.status(401).build();
+        }
 
-            Project project = projectRepository.findByProjectName(projectName)
-                    .orElseThrow(() -> new RuntimeException("Project not found: " + projectName));
+        List<AccountUpdate> incoming = updateAccountsRequest.getAccounts();
+        if (incoming == null) {
+            return ResponseEntity.badRequest().build();
+        }
 
-            List<AccountUpdate> incomingAccounts = updateAccountsRequest.getAccounts();
-            if (incomingAccounts == null) {
+        // 2. Entscheiden: neu, aktualisieren oder löschen
+        Map<Integer, AccountEntity> existing = accountRepository.findByProject(project).stream()
+                .collect(Collectors.toMap(AccountEntity::getAccountNumber, Function.identity()));
+
+        List<AccountEntity> toSave = new ArrayList<>();   // neu + aktualisiert
+        Set<Integer> seen = new HashSet<>();
+        List<AccountEntity> toDelete = new ArrayList<>();
+
+        for (AccountUpdate in : incoming) {
+            if (!seen.add(in.getNumber())) {
                 return ResponseEntity.badRequest().build();
             }
 
-            List<AccountEntity> existingEntities = accountRepository.findByProject(project);
-            accountRepository.deleteAll(existingEntities);
+            AccountEntity entity = existing.remove(in.getNumber());
+            boolean nameSent = in.getName() != null && in.getName().isPresent();
+            String newName = nameSent ? in.getName().get() : null;
 
-            List<AccountEntity> newEntities = incomingAccounts.stream()
-                    .map(incoming -> {
-                        AccountEntity entity = new AccountEntity();
-                        entity.setProject(project);
-                        return entity;
-                    })
-                    .collect(Collectors.toList());
+            // name explicitly null -> delete button
+            if (nameSent && newName == null) {
+                if (entity != null) {
+                    toDelete.add(entity);
+                }
+                continue;                                      // never setName(null)
+            }
 
-            accountRepository.saveAll(newEntities);
-
-            log.info("Accounts erfolgreich aktualisiert für Projekt: {}", projectName);
-            return ResponseEntity.noContent().build();
-
-        } catch (Exception e) {
-            log.error("Fehler beim Aktualisieren der Accounts: ", e);
-            return ResponseEntity.status(500).build();
+            if (entity == null) {
+                if (newName == null) {
+                    return ResponseEntity.badRequest().build();
+                }                entity = new AccountEntity();
+                entity.setProject(project);
+                entity.setAccountNumber(in.getNumber());
+            }
+            if (in.getName().isPresent()) {
+                entity.setName(in.getName().get());
+            }
+            if (entity.getName() == null) {
+                return ResponseEntity.badRequest().build();
+            }
+            toSave.add(entity);
         }
+
+        log.info("Incoming={}, save={}, delete={}",
+                incoming.stream().map(AccountUpdate::getNumber).toList(),
+                toSave.stream().map(AccountEntity::getAccountNumber).toList(),
+                toDelete.stream().map(AccountEntity::getAccountNumber).toList());
+
+        accountRepository.saveAll(toSave);
+        accountRepository.deleteAll(toDelete);
+
+        log.info("Accounts für Projekt {}: {} gespeichert, {} gelöscht",
+                projectName, toSave.size(), toDelete.size());
+        return ResponseEntity.noContent().build();
     }
 }

@@ -7,6 +7,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Entity
@@ -39,7 +40,7 @@ public class BookingEntity {
     private AccountEntity creditAccount;
 
     @Column(name = "amount", nullable = false)
-    private int amount;
+    private BigDecimal amount;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "project_id", nullable = false)

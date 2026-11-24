@@ -7,7 +7,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "account")
+@Table(name = "account", uniqueConstraints =
+@UniqueConstraint(columnNames = {"project_id", "account_number"}))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -18,7 +19,7 @@ public class AccountEntity {
     @Column(name = "id", updatable = false, nullable = false)
     private String id;
 
-    @Column(name = "account_number", nullable = false, unique = true)
+    @Column(name = "account_number", nullable = false)
     private int accountNumber;
 
     @Column(name = "name", nullable = false)

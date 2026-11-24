@@ -22,6 +22,7 @@ public class WebConfig {
                                 "http://localhost:8080",
                                 "https://localhost:8443",
                                 "https://*.github.io",
+                                "https://*.trycloudflare.com",
                                 "https://alexanderpeter.github.io"
                         )
                         .allowedMethods("*")
