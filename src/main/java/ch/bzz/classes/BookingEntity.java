@@ -15,7 +15,7 @@ import java.time.LocalDate;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-public class Booking {
+public class BookingEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", updatable = false, nullable = false)
@@ -32,11 +32,11 @@ public class Booking {
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "debit_account_id", nullable = false)
-    private Account debitAccount;
+    private AccountEntity debitAccount;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "credit_account_id", nullable = false)
-    private Account creditAccount;
+    private AccountEntity creditAccount;
 
     @Column(name = "amount", nullable = false)
     private int amount;
