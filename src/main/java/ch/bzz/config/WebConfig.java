@@ -19,9 +19,9 @@ public class WebConfig {
                 registry.addMapping("/**")
                         .allowedOriginPatterns(
 //                                "null", // e.g. file://...
-//                                "http://localhost:8080",
-//                                "https://localhost:8443",
-//                                "https://*.github.io"
+                                "http://localhost:8080",
+                                "https://localhost:8443",
+                                "https://*.github.io",
                                 "https://alexanderpeter.github.io"
                         )
                         .allowedMethods("*")
